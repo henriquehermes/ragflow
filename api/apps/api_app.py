@@ -849,3 +849,45 @@ def retrieval():
             return get_json_result(data=False, retmsg=f'No chunk found! Check the chunk status please!',
                                    retcode=RetCode.DATA_ERROR)
         return server_error_response(e)
+
+@manager.route('/document/run', methods=['POST'])
+def run():
+    token = request.headers.get('Authorization').split()[1]
+    objs = APIToken.query(token=token)
+    if not objs:
+        return get_json_result(
+            data=False, retmsg='Token is not valid!"', retcode=RetCode.AUTHENTICATION_ERROR)
+
+    # Validate that `doc_ids` is provided in the request body
+    req = request.json
+    if "run" in req and "doc_ids" in req:
+        if str(req["run"]).strip() == "1":
+            try:
+                doc_ids = req["doc_ids"]
+                if not isinstance(doc_ids, list) or not doc_ids:
+                    return get_data_error_result(retmsg="doc_ids must be a non-empty list!")
+                
+                for doc in doc_ids:
+                    info = {"run": 1, "progress": 0}
+                    info["progress_msg"] = ""
+                    info["chunk_num"] = 0
+                    info["token_num"] = 0
+                    DocumentService.update_by_id(doc["id"], info)
+                    # if str(req["run"]) == TaskStatus.CANCEL.value:
+                    tenant_id = DocumentService.get_tenant_id(doc["id"])
+                    if not tenant_id:
+                        return get_data_error_result(retmsg="Tenant not found!")
+    
+                    # e, doc = DocumentService.get_by_id(doc["id"])
+                    TaskService.filter_delete([Task.doc_id == doc["id"]])
+                    e, doc = DocumentService.get_by_id(doc["id"])
+                    doc = doc.to_dict()
+                    doc["tenant_id"] = tenant_id
+                    bucket, name = File2DocumentService.get_storage_address(doc_id=doc["id"])
+                    queue_tasks(doc, bucket, name)
+
+            except Exception as e:
+                return server_error_response(e)
+    
+    return get_json_result(data=req["doc_ids"])
+
